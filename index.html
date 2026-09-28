@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111827"><title>Battery Inventory V4.3</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f3f4f6;color:#111827}
+header{background:#111827;color:#fff;padding:18px 14px;position:sticky;top:0;z-index:5}h1{margin:0;font-size:21px}
+nav{display:flex;gap:6px;overflow:auto;background:#fff;padding:7px;position:sticky;top:60px;z-index:4;border-bottom:1px solid #ddd}
+nav button{border:0;padding:9px 12px;border-radius:9px;font-weight:700;white-space:nowrap}nav .on{background:#111827;color:#fff}
+main{max-width:950px;margin:auto;padding:14px}.card,.panel{background:#fff;padding:15px;border-radius:14px;margin-bottom:12px;box-shadow:0 1px 4px #0001}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}@media(min-width:700px){.grid{grid-template-columns:repeat(3,1fr)}}
+input,select{width:100%;padding:11px;border:1px solid #d1d5db;border-radius:9px;font-size:16px;background:#fff}
+label{display:block;font-size:13px;font-weight:700;margin:7px 0 4px}
+button{cursor:pointer}.primary,.secondary,.danger{border:0;border-radius:9px;padding:11px 14px;font-weight:700}.primary{background:#111827;color:#fff}.secondary{background:#e5e7eb}.danger{background:#dc2626;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:8px;border-bottom:1px solid #eee;vertical-align:top}
+.muted{color:#6b7280;font-size:13px}.stat{font-size:25px;font-weight:800}.profit{color:#087f23;font-weight:700}
+.notice{padding:11px;border-radius:10px;background:#eff6ff;margin-bottom:10px}.success{background:#ecfdf5}.warn{background:#fff7ed}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1;min-width:120px}.empty{text-align:center;padding:25px;color:#6b7280}
+.badge{display:inline-block;background:#e5e7eb;border-radius:99px;padding:3px 7px;font-size:12px}.thumb{width:55px;height:55px;object-fit:cover;border-radius:8px}
+.file{width:100%;padding:9px;border:1px dashed #aaa}.timeline{border-left:3px solid #ddd;margin:12px 0;padding-left:14px}
+.event{padding:10px 0;border-bottom:1px solid #eee}.event b{display:block}.green{color:#087f23}.red{color:#b91c1c}
+</style></head><body>
+<header><h1>🔋 Battery Inventory</h1><small>V4.4 • Batch tracking + complete battery history</small></header>
+<nav id="nav">
+<button data-t="dashboard">Dashboard</button><button data-t="stock">Stock</button><button data-t="buy">Buy / Stock</button>
+<button data-t="sell">Sell</button><button data-t="history">Battery History</button><button data-t="monthly">Monthly</button><button data-t="cash">Cash</button><button data-t="backup">Backup</button>
+</nav><main id="app"></main>
+<script>
+const K='battery_inventory_v41'; let db=JSON.parse(localStorage.getItem(K)||'null')||{version:'4.1',batches:[],sales:[],cash:[]};
+const uid=p=>p+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);
+const esc=x=>String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const money=x=>'€'+Number(x||0).toFixed(2), today=()=>new Date().toISOString().slice(0,10);
+function save(){localStorage.setItem(K,JSON.stringify(db));render()} function stock(){return db.batches.reduce((n,b)=>n+Number(b.qty||0),0)}
+function cost(){return db.batches.reduce((n,b)=>n+b.qty*b.buy,0)} function revenue(){return db.sales.reduce((n,s)=>n+s.qty*s.sell,0)}
+function profit(){return db.sales.reduce((n,s)=>n+Number(s.profit||0),0)}
+let tab='dashboard', selectedModel='';
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;selectedModel='';render()});
+
+function models(){
+ const m={}; db.batches.forEach(b=>{let key=(b.brand+'|'+b.name+'|'+b.type+'|'+b.ah+'|'+b.cca).toLowerCase(); if(!m[key])m[key]={key,brand:b.brand,name:b.name,type:b.type,ah:b.ah,cca:b.cca,batches:[]};m[key].batches.push(b)});
+ return Object.values(m);
+}
+function modelHistory(key){
+ const m=models().find(x=>x.key===String(key).toLowerCase()); if(!m)return '<div class="empty">Battery not found.</div>';
+ const bs=m.batches, ids=new Set(bs.map(b=>b.id)), ss=db.sales.filter(s=>ids.has(s.batchId));
+ const bought=bs.reduce((n,b)=>n+b.originalQty,0), remaining=bs.reduce((n,b)=>n+b.qty,0), sold=ss.reduce((n,s)=>n+s.qty,0);
+ return `<div class="panel"><div class="row"><div><h2>${esc(m.brand)} ${esc(m.name)}</h2><div class="muted">${esc(m.type||'')} ${m.ah?m.ah+'Ah ':''}${m.cca?m.cca+'A':''}</div></div><button class="secondary" id="backModels">← All batteries</button></div>
+ <div class="grid">
+ <div class="card"><div class="muted">Total bought</div><div class="stat">${bought}</div></div>
+ <div class="card"><div class="muted">Total sold</div><div class="stat">${sold}</div></div>
+ <div class="card"><div class="muted">Currently in stock</div><div class="stat">${remaining}</div></div>
+ <div class="card"><div class="muted">Sales revenue</div><div class="stat">${money(ss.reduce((n,s)=>n+s.qty*s.sell,0))}</div></div>
+ <div class="card"><div class="muted">Gross profit</div><div class="stat profit">${money(ss.reduce((n,s)=>n+s.profit,0))}</div></div>
+ </div>
+ <h3>Purchase history</h3><table><tr><th>Date bought</th><th>Qty bought</th><th>Buy/unit</th><th>Total cost</th><th>Remaining</th><th>Supplier</th></tr>
+ ${bs.slice().sort((a,b)=>(b.purchaseDate||'').localeCompare(a.purchaseDate||'')).map(b=>`<tr><td>${esc(b.purchaseDate||'Not recorded')}</td><td>${b.originalQty}</td><td>${money(b.buy)}</td><td>${money(b.originalQty*b.buy)}</td><td>${b.qty}</td><td>${esc(b.supplier||'')}</td></tr>`).join('')}</table>
+ <h3>Sales history</h3>${ss.length?`<table><tr><th>Date sold</th><th>Vehicle</th><th>Qty</th><th>Buy/unit</th><th>Sell/unit</th><th>Revenue</th><th>Profit</th></tr>
+ ${ss.slice().sort((a,b)=>(b.saleDate||'').localeCompare(a.saleDate||'')).map(s=>`<tr><td>${esc(s.saleDate||'')}</td><td>${esc(s.vehicleModel||'Not recorded')}</td><td>${s.qty}</td><td>${money(s.buy)}</td><td>${money(s.sell)}</td><td>${money(s.qty*s.sell)}</td><td class="profit">${money(s.profit)}</td></tr>`).join('')}</table>`:'<div class="empty">Nothing sold from this battery yet.</div>'}
+ </div>`;
+}
+function history(){
+ if(selectedModel)return modelHistory(selectedModel);
+ return `<div class="panel"><h2>Battery History</h2><p class="muted">Tap <b>View full history</b> on any battery to see every purchase and sale for that battery.</p>
+ <input id="modelSearch" placeholder="Search Mutlu, Varta, 44Ah, AGM..."><div id="models"></div></div>`;
+}
+function renderModels(q=''){
+ return models().filter(m=>{
+  const ids=new Set(m.batches.map(b=>b.id));
+  const vehicles=db.sales.filter(s=>ids.has(s.batchId)).map(s=>s.vehicleModel||'').join(' ');
+  return (m.brand+' '+m.name+' '+m.type+' '+m.ah+' '+m.cca+' '+vehicles).toLowerCase().includes(q.toLowerCase());
+}).map(m=>{
+  let bs=m.batches, ss=db.sales.filter(s=>bs.some(b=>b.id===s.batchId)), bought=bs.reduce((n,b)=>n+b.originalQty,0), sold=ss.reduce((n,s)=>n+s.qty,0), remain=bought-sold;
+  return `<div class="card"><div class="row"><div><h3>${esc(m.brand)} ${esc(m.name)}</h3><div class="muted">${esc(m.type||'')} ${m.ah?m.ah+'Ah ':''}${m.cca?m.cca+'A':''}</div></div><div><b>${remain}</b> in stock</div><button type="button" class="primary view-history" data-batch-id="${esc(m.batches[0].id)}">View full history</button></div>
+  <div class="muted">Bought: ${bought} • Sold: ${sold} • ${bs.length} purchase batch${bs.length===1?'':'es'} • Sales revenue: ${money(ss.reduce((n,s)=>n+s.qty*s.sell,0))}</div></div>`;
+ }).join('')||'<div class="empty">No batteries found.</div>';
+}
+function dashboard(){return `<div class="grid"><div class="card"><div class="muted">Units in stock</div><div class="stat">${stock()}</div></div><div class="card"><div class="muted">Stock cost</div><div class="stat">${money(cost())}</div></div><div class="card"><div class="muted">Sales revenue</div><div class="stat">${money(revenue())}</div></div><div class="card"><div class="muted">Gross profit</div><div class="stat profit">${money(profit())}</div></div></div><div class="panel"><h2>Quick actions</h2><div class="row"><button class="primary" data-go="buy">＋ Add stock</button><button class="primary" data-go="sell">Sell battery</button><button class="secondary" data-go="history">Battery history</button></div></div>`}
+function stockView(){let r=db.batches.map(b=>`<tr><td>${b.photo?`<img class="thumb" src="${b.photo}">`:''}</td><td><b>${esc(b.brand)} ${esc(b.name)}</b><br>${esc(b.type||'')} ${b.ah?b.ah+'Ah ':''}${b.cca?b.cca+'A':''}</td><td>${b.qty}/${b.originalQty}</td><td>${money(b.buy)}</td><td>${esc(b.purchaseDate||'')}</td><td><button class="secondary" data-model-from-b="${b.id}">History</button></td></tr>`).join('');return `<div class="panel"><h2>Stock by purchase batch</h2>${r?`<table><tr><th></th><th>Battery</th><th>Stock</th><th>Buy</th><th>Purchased</th><th></th></tr>${r}</table>`:'<div class="empty">No stock.</div>'}</div>`}
+function buy(){return `<div class="panel"><h2>Add purchase / existing stock</h2><div class="notice success">Choose any date so you can enter batteries you already have in stock.</div><form id="buyForm"><div class="grid"><div><label>Brand</label><input name="brand" required></div><div><label>Battery / model</label><input name="name" required></div><div><label>Type</label><select name="type"><option>Normal</option><option>AGM</option><option>EFB</option><option>Gel</option><option>Lithium</option></select></div><div><label>Ah</label><input name="ah" type="number"></div><div><label>CCA</label><input name="cca" type="number"></div><div><label>Quantity</label><input name="qty" type="number" min="1" required></div><div><label>Buying price / unit</label><input name="buy" type="number" step=".01" min="0" required></div><div><label>Purchase date</label><input name="purchaseDate" type="date" value="${today()}"></div><div><label>Supplier</label><input name="supplier"></div><div><label>Photo</label><input name="photo" type="file" accept="image/*" class="file"></div></div><br><button class="primary">Add purchase batch</button></form></div>`}
+function sell(){let o=db.batches.filter(b=>b.qty>0).map(b=>`<option value="${b.id}">${esc(b.brand+' '+b.name)} — ${b.qty} @ ${money(b.buy)} (${esc(b.purchaseDate||'no date')})</option>`).join('');return `<div class="panel"><h2>Sell battery</h2>${o?`<form id="sellForm"><label>Purchase batch</label><select name="batchId">${o}</select><div class="grid"><div><label>Quantity</label><input name="qty" type="number" min="1" value="1"></div><div><label>Selling price / unit</label><input name="sell" type="number" step=".01" min="0" required></div><div><label>Sale date</label><input name="saleDate" type="date" value="${today()}"></div><div><label>Vehicle model</label><input name="vehicleModel" placeholder="e.g. Toyota Yaris"></div></div><br><button class="primary">Record sale</button></form>`:'<div class="empty">No stock available.</div>'}</div>`}
+function monthly(){
+ let months=[...new Set([
+  ...db.sales.map(s=>(s.saleDate||'').slice(0,7)),
+  ...db.cash.map(c=>(c.date||'').slice(0,7)),
+  ...db.batches.map(b=>(b.purchaseDate||'').slice(0,7))
+ ])].filter(Boolean).sort().reverse();
+ return `<div class="panel"><h2>Monthly analysis</h2>
+ <div class="notice success">Spending includes battery purchases. Cash in includes battery sales. Manual cash movements are included too.</div>
+ <table><tr><th>Month</th><th>Sales</th><th>Profit</th><th>Spending</th><th>Cash in</th></tr>
+ ${months.map(m=>{
+   let s=db.sales.filter(x=>(x.saleDate||'').startsWith(m));
+   let purchases=db.batches.filter(x=>(x.purchaseDate||'').startsWith(m));
+   let manual=db.cash.filter(x=>(x.date||'').startsWith(m));
+   let purchaseSpend=purchases.reduce((n,x)=>n+Number(x.originalQty||0)*Number(x.buy||0),0);
+   let manualOut=manual.filter(x=>x.type==='out' && x.source!=='purchase').reduce((n,x)=>n+Number(x.amount||0),0);
+   let manualIn=manual.filter(x=>x.type==='in' && x.source!=='sale').reduce((n,x)=>n+Number(x.amount||0),0);
+   let salesIn=s.reduce((n,x)=>n+Number(x.qty||0)*Number(x.sell||0),0);
+   let profitValue=s.reduce((n,x)=>n+Number(x.profit||0),0);
+   return `<tr><td>${m}</td><td>${money(salesIn)}</td><td class="profit">${money(profitValue)}</td><td>${money(purchaseSpend+manualOut)}</td><td>${money(salesIn+manualIn)}</td></tr>`;
+ }).join('')}</table></div>`}
+function cash(){return `<div class="panel"><h2>Cash movements</h2><form id="cashForm"><div class="grid"><div><label>Date</label><input name="date" type="date" value="${today()}"></div><div><label>Type</label><select name="type"><option value="in">Money in</option><option value="out">Spending</option></select></div><div><label>Amount</label><input name="amount" type="number" step=".01" min="0" required></div><div><label>Description</label><input name="desc"></div></div><br><button class="primary">Add movement</button></form></div><div class="panel"><h3>History</h3><table><tr><th>Date</th><th>Type</th><th>Amount</th><th>Description</th></tr>${db.cash.slice().reverse().map(c=>`<tr><td>${esc(c.date)}</td><td>${c.type==='in'?'Money in':'Spending'}</td><td>${money(c.amount)}</td><td>${esc(c.desc)}</td></tr>`).join('')}</table></div>`}
+function backup(){return `<div class="panel"><h2>Backup & Data</h2>
+<div class="notice success"><b>Export first.</b> Your backup contains all V4.1 purchase batches, sales, cash movements and battery history.</div>
+<h3>1. Export a backup</h3><button id="export" class="primary">⬇ Export V4.1 Backup</button>
+<p class="muted">Save this JSON file somewhere safe. You can use it to restore the complete database.</p>
+<hr>
+<h3>2. Restore a V4.1 backup</h3><input id="restore" type="file" accept=".json,application/json" class="file"><div id="res"></div>
+<hr>
+<h3>3. Import an old V2 / V3 backup</h3><input id="old" type="file" accept=".json,application/json" class="file"><div id="imp"></div>
+<hr>
+<h3>4. Start V4.1 from scratch</h3>
+<div class="notice warn"><b>Warning:</b> This permanently deletes the data currently stored in V4.1 on this device. It does not delete your exported JSON files.</div>
+<button id="clearAll" class="danger">🗑 Clear All V4.1 Data</button>
+<div id="clearResult"></div>
+</div>`}
+
+function fileData(f){return new Promise((ok,no)=>{let r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(f)})}
+function download(n,x){let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([x],{type:'application/json'}));a.download=n;a.click()}
+function migrate(file){
+ let r=new FileReader();r.onload=()=>{try{let o=JSON.parse(r.result);if(o.batches){showImport(o.batches,o.sales||[],o.cash||[]);return}
+ let inv=o.inventory||[], os=o.sales||[], map={}, bs=[];
+ inv.forEach(i=>{let id=i.id||uid('old'),rel=os.filter(s=>(s.inventoryId||s.batteryId||s.batteryID)===id),sold=rel.reduce((n,s)=>n+Number(s.qty||0),0),remain=Number(i.qty||0),b={id:uid('b'),brand:i.brand||'',name:i.name||i.model||'Battery',type:i.type||'',ah:Number(i.ah||0),cca:Number(i.cca||0),qty:remain,originalQty:remain+sold,buy:Number(i.buy||i.buyingPrice||0),purchaseDate:i.purchaseDate||i.dateBought||'',supplier:i.supplier||'',photo:i.photo||''};map[id]=b.id;bs.push(b)});
+ let ss=os.map(s=>{let b=bs.find(x=>x.id===map[s.inventoryId||s.batteryId||s.batteryID]);return{id:uid('s'),batchId:b?b.id:'',name:s.name||(b?b.name:'Battery'),brand:s.brand||(b?b.brand:''),qty:Number(s.qty||0),buy:Number(s.buy||s.buyingPrice||0),sell:Number(s.sell||s.sellingPrice||0),purchaseDate:s.purchaseDate||(b?b.purchaseDate:''),saleDate:s.saleDate||s.date||'',vehicleModel:s.vehicleModel||s.vehicle||'',profit:Number(s.profit!=null?s.profit:(Number(s.sell||0)-Number(s.buy||0))*Number(s.qty||0))}});
+ if(!bs.length&&!ss.length&&!o.cash?.length)throw Error('No V2/V3 inventory data found');showImport(bs,ss,o.cash||[]);
+ }catch(e){document.getElementById('imp').innerHTML='<div class="notice warn">'+esc(e.message)+'</div>'}};r.readAsText(file)}
+let pending;
+function showImport(bs,ss,cc){pending={batches:bs,sales:ss,cash:cc};document.getElementById('imp').innerHTML=`<div class="notice"><b>Ready to migrate.</b><br>${bs.length} purchase batches • ${bs.reduce((n,b)=>n+b.qty,0)} units currently in stock • ${ss.length} sales • ${cc.length} cash movements<br><br><button id="go" class="primary">Import into V4.1</button> <button id="no" class="secondary">Cancel</button></div>`;document.getElementById('go').onclick=()=>{db={version:'4.1',...pending};save();alert('Migration complete. Open Battery History to see each battery model with purchase and sales history.')};document.getElementById('no').onclick=()=>document.getElementById('imp').innerHTML='Migration cancelled.'}
+function bind(){
+ document.querySelectorAll('[data-go]').forEach(x=>x.onclick=()=>{tab=x.dataset.go;render()});
+ document.querySelectorAll('.view-history').forEach(x=>{
+  x.onclick=(ev)=>{
+    ev.preventDefault();
+    ev.stopPropagation();
+    const batchId=x.getAttribute('data-batch-id');
+    const batch=db.batches.find(b=>b.id===batchId);
+    if(!batch){alert('Battery history could not be found.');return;}
+    const m=models().find(mm=>mm.batches.some(b=>b.id===batchId));
+    if(!m){alert('Battery history could not be found.');return;}
+    selectedModel=m.key;
+    tab='history';
+    render();
+  };
+});
+ const ms=document.getElementById('modelSearch'),mo=document.getElementById('models');if(ms){mo.innerHTML=renderModels();ms.oninput=()=>mo.innerHTML=renderModels(ms.value)}
+ const back=document.getElementById('backModels');if(back)back.onclick=()=>{selectedModel='';render()};
+ document.querySelectorAll('[data-model-from-b]').forEach(x=>x.onclick=(ev)=>{
+  ev.preventDefault();
+  ev.stopPropagation();
+  let b=db.batches.find(z=>z.id===x.dataset.modelFromB);
+  if(!b){alert('Battery history could not be found.');return;}
+  let m=models().find(mm=>mm.batches.some(z=>z.id===b.id));
+  if(!m){alert('Battery history could not be found.');return;}
+  selectedModel=m.key;
+  tab='history';
+  render();
+});
+ const bf=document.getElementById('buyForm');if(bf)bf.onsubmit=async e=>{e.preventDefault();let f=new FormData(bf),p='',file=f.get('photo');if(file?.size)p=await fileData(file);let q=+f.get('qty');const batch={id:uid('b'),brand:f.get('brand'),name:f.get('name'),type:f.get('type'),ah:+f.get('ah')||0,cca:+f.get('cca')||0,qty:q,originalQty:q,buy:+f.get('buy'),purchaseDate:f.get('purchaseDate'),supplier:f.get('supplier'),photo:p};
+  db.batches.push(batch);
+  db.cash.push({id:uid('c'),date:batch.purchaseDate||today(),type:'out',amount:q*batch.buy,desc:'Battery purchase: '+batch.brand+' '+batch.name,source:'purchase',batchId:batch.id});
+  save();tab='stock';render()};
+ const sf=document.getElementById('sellForm');if(sf)sf.onsubmit=e=>{e.preventDefault();let f=new FormData(sf),b=db.batches.find(x=>x.id===f.get('batchId')),q=+f.get('qty'),sell=+f.get('sell');if(q<1||q>b.qty)return alert('Not enough stock in this purchase batch.');b.qty-=q;const sale={id:uid('s'),batchId:b.id,name:b.name,brand:b.brand,qty:q,buy:b.buy,sell,purchaseDate:b.purchaseDate,saleDate:f.get('saleDate'),vehicleModel:f.get('vehicleModel')||'',profit:(sell-b.buy)*q};
+  db.sales.push(sale);
+  db.cash.push({id:uid('c'),date:sale.saleDate||today(),type:'in',amount:q*sell,desc:'Battery sale: '+b.brand+' '+b.name+(sale.vehicleModel?' - '+sale.vehicleModel:''),source:'sale',saleId:sale.id});
+  save();tab='history';render()};
+ const cf=document.getElementById('cashForm');if(cf)cf.onsubmit=e=>{e.preventDefault();let f=new FormData(cf);db.cash.push({id:uid('c'),date:f.get('date'),type:f.get('type'),amount:+f.get('amount'),desc:f.get('desc')});save();tab='cash';render()};
+ const ex=document.getElementById('export');if(ex)ex.onclick=()=>{let backup={version:'4.1',backupType:'battery-inventory',createdAt:new Date().toISOString(),batches:db.batches,sales:db.sales,cash:db.cash};download('battery-inventory-v4.1-backup-'+today()+'.json',JSON.stringify(backup,null,2));};
+ const old=document.getElementById('old');if(old)old.onchange=e=>e.target.files[0]&&migrate(e.target.files[0]);
+ const rr=document.getElementById('restore');if(rr)rr.onchange=e=>{
+ let file=e.target.files[0]; if(!file)return;
+ let r=new FileReader(); r.onload=()=>{
+  try{
+   let o=JSON.parse(r.result);
+   if(!o || !Array.isArray(o.batches) || !Array.isArray(o.sales) || !Array.isArray(o.cash))
+     throw Error('This is not a valid V4.1 backup. Please choose a V4.1 JSON backup.');
+   let units=o.batches.reduce((n,b)=>n+Number(b.qty||0),0);
+   let bought=o.batches.reduce((n,b)=>n+Number(b.originalQty||0),0);
+   let revenue=o.sales.reduce((n,s)=>n+Number(s.qty||0)*Number(s.sell||0),0);
+   document.getElementById('res').innerHTML=
+    '<div class="notice"><b>Backup verified.</b><br>'+
+    'Purchase batches: '+o.batches.length+'<br>'+
+    'Units currently in stock: '+units+'<br>'+
+    'Total units purchased: '+bought+'<br>'+
+    'Sales records: '+o.sales.length+'<br>'+
+    'Cash movements: '+o.cash.length+'<br>'+
+    'Recorded sales revenue: '+money(revenue)+
+    '<br><br><button id="confirmRestore" class="primary">Restore This Backup</button> '+
+    '<button id="cancelRestore" class="secondary">Cancel</button></div>';
+   document.getElementById('confirmRestore').onclick=()=>{
+     db={version:'4.1',batches:o.batches,sales:o.sales,cash:o.cash};
+     localStorage.setItem(K,JSON.stringify(db));
+     alert('Backup restored successfully.');
+     render();
+   };
+   document.getElementById('cancelRestore').onclick=()=>{
+     document.getElementById('res').innerHTML='<div class="notice">Restore cancelled. Your current data was not changed.</div>';
+     rr.value='';
+   };
+  }catch(x){document.getElementById('res').innerHTML='<div class="notice warn">'+esc(x.message)+'</div>'}
+ }; r.readAsText(file);
+};
+ const clr=document.getElementById('clearAll');if(clr)clr.onclick=()=>{
+   let phrase=prompt('This will DELETE ALL V4.1 data on this device.\n\nType DELETE to continue:');
+   if(phrase!=='DELETE'){if(phrase!==null)alert('Nothing was deleted. You must type DELETE exactly.');return}
+   localStorage.removeItem(K);
+   db={version:'4.1',batches:[],sales:[],cash:[]};
+   document.getElementById('clearResult').innerHTML='<div class="notice success">All V4.1 data has been cleared. The app is now empty.</div>';
+   render();
+ };
+}
+function render(){document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===tab));let a=document.getElementById('app');a.innerHTML=tab==='dashboard'?dashboard():tab==='stock'?stockView():tab==='buy'?buy():tab==='sell'?sell():tab==='history'?history():tab==='monthly'?monthly():tab==='cash'?cash():backup();bind()}
+render();
+</script></body></html>
